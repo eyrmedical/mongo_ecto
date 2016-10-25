@@ -58,7 +58,7 @@ defmodule MongoEcto.Model.Helpers do
     def apply_changes(%{data: %{__struct__: schema}} = changeset) do
         record = Ecto.Changeset.apply_changes(changeset)
         fields = schema.__schema__(:fields)
-        drop_fields = (Map.keys(record) -- (fields ++ [:__struct__])) #++ [:id]
+        drop_fields = (Map.keys(record) -- (fields ++ [:__struct__])) ++ [:id]
         Map.drop record, drop_fields
     end
 

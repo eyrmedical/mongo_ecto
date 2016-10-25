@@ -116,6 +116,7 @@ defmodule MongoEcto.Repo do
         |> schema.field_timestamp(:inserted_at)
         |> schema.field_timestamp(:updated_at)
         |> schema.apply_changes
+        |> Map.delete(:id)
 
         new_record_map = Map.from_struct(new_record)
         result = Mongo.insert_one(MongoEcto, schema.collection_name, new_record_map)
@@ -152,14 +153,12 @@ defmodule MongoEcto.Repo do
     Update existing record.
     """
     @spec update(mongo_object) :: {:ok, mongo_record} | {:error, mongo_changeset}
-    def update(%{
-        valid?: true,
-        id: record_id,
-        data: %{__struct__: schema}
-    } = changeset) when is_bitstring(record_id) do
+    def update(%{valid?: true, data: %{__struct__: schema, id: record_id}} = changeset)
+        when is_bitstring(record_id) do
         updated_record = changeset
         |> schema.field_timestamp(:updated_at)
         |> schema.apply_changes
+        |> Map.update!(:inserted_at, &(ecto_timestamp_to_datetime(&1)))
 
         bson_record_id = to_mongo_id(record_id)
         result = Mongo.replace_one(
@@ -437,5 +436,12 @@ defmodule MongoEcto.Repo do
         datetime = :calendar.gregorian_seconds_to_datetime(epoch + div(timestamp, 1000))
         usec = rem(timestamp, 1000) * 1000
         %{Ecto.DateTime.from_erl(datetime) | usec: usec}
+    end
+
+    # Convert integer timestamp to %Ecto.Datetime{}
+    @spec ecto_timestamp_to_datetime(%Ecto.DateTime{}) :: %BSON.DateTime{}
+    defp ecto_timestamp_to_datetime(ecto_timestamp = %Ecto.DateTime{}) do
+        {:ok, datetime} = Ecto.DateTime.dump(ecto_timestamp)
+        BSON.DateTime.from_datetime(datetime)
     end
 end

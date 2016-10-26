@@ -2,6 +2,7 @@
 1. Add `{:mongo_ecto, git: "https://github.com/eyrmedical/mongo_ecto.git"}` to **mix.exs** under `deps` function, add `:poolboy` and `:mongodb` in your application list.
 2. Run `mix deps.get && mix deps.compile`.
 3. Add `MongoEcto.Repo` into your supervision tree, on Phoenix it should look like: `worker(MongoEcto.Repo, [[database: "eyr", hostname: "localhost"]])`.
+4. In **web.exs** either remove `import Ecto.Changeset` completly if you plan to use different database endpoints, or replace it with `import Ecto.Changeset, except: [unique_constraint: 2]` if you plan to use **MongoEcto** as single repo for all your schemas.
 
 # Usage
 `MongoEcto.Repo` implements most of the `Ecto.Repo` functions with exception to transactions, mass operations (**insert_all, update_all etc**) and system calls defined for the `Ecto.Repo` Behaviour.

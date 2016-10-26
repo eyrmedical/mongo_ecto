@@ -18,12 +18,7 @@ defmodule MongoEcto.Model do
                 Helpers.unique_constraint(model, field)
             end
 
-
             @epoch :calendar.datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
-
-            def now_timestamp do
-                Helpers.now_timestamp()
-            end
 
             def field_timestamp(changeset, field) do
                 Helpers.field_timestamp(changeset, field)
@@ -106,22 +101,11 @@ defmodule MongoEcto.Model.Helpers do
     end
 
 
-    @epoch :calendar.datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
-
-    @doc """
-    Get current timestamp in BSON format suitable for MongoDb.
-    """
-    @spec now_timestamp :: %BSON.DateTime{}
-    def now_timestamp do
-        greg_secs = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
-        %BSON.DateTime{utc: (greg_secs - @epoch) * 1000}
-    end
-
     @doc """
     Add current timestamp in some field.
     """
     @spec field_timestamp(mongo_changeset | mongo_record, atom()) :: mongo_changeset
     def field_timestamp(changeset, field) do
-        change(changeset, Map.put(%{}, field, now_timestamp()))
+        change(changeset, Map.put(%{}, field, Ecto.DateTime.utc))
     end
 end

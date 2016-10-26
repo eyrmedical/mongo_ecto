@@ -14,12 +14,14 @@ defmodule MongoEcto.Repo do
     @type mongo_object_result :: {:ok, Ecto.Schema.t} | {:error, Ecto.Changeset.t}
     @type mongo_changeset :: Ecto.Changeset.t
     @type mongo_record :: Ecto.Schema.t
+    @type mongo_dirty_record :: Ecto.Schema.t
     @type mongo_object :: mongo_changeset | mongo_record
     @type mongo_query :: map()
     @type mongo_options :: Keyword.t
     @type mongo_preload :: [atom()]
     @type mongo_schema :: Ecto.Schema.t
     @type mongo_assoc :: %Ecto.Association.HasThrough{} | %Ecto.Association.Has{}
+    @type mongo_datatype :: mongo_bson_id | %BSON.DateTime{}
 
 
     def start_link(opts) do
@@ -111,18 +113,17 @@ defmodule MongoEcto.Repo do
     Add new record.
     """
     @spec insert(mongo_object) :: {:ok, mongo_record} | {:error, mongo_changeset}
-    def insert(%{valid?: true, data: %{__struct__: schema}} = changeset) do
+    def insert(%Changeset{valid?: true, data: %{__struct__: schema}} = changeset) do
         new_record = changeset
         |> schema.field_timestamp(:inserted_at)
         |> schema.field_timestamp(:updated_at)
         |> schema.apply_changes
-        |> Map.delete(:id)
 
-        new_record_map = Map.from_struct(new_record)
+        new_record_map = Map.from_struct(new_record) |> convert_types_with(&to_mongo_type/1)
         result = Mongo.insert_one(MongoEcto, schema.collection_name, new_record_map)
         case result do
             {:ok, %{inserted_id: bson_id}} ->
-                inserted_record = inserted_record_to_struct(new_record_map, mongo_id_to_string(bson_id))
+                inserted_record = Map.put(new_record, :id, mongo_id_to_string(bson_id))
                 {:ok, inserted_record}
             {:error, mongo_error} ->
                 Logger.error fn -> "Mongo Insert Error: " <> inspect(mongo_error) end
@@ -132,11 +133,11 @@ defmodule MongoEcto.Repo do
                 {:ok, new_record}
         end
     end
-    def insert(%{valid?: false} = changeset) do
+    def insert(%Changeset{valid?: false} = changeset) do
         {:error, changeset}
     end
     def insert(record) do
-        changeset = Ecto.Changeset.change(record)
+        changeset = Changeset.change(record)
         insert(changeset)
     end
 
@@ -152,40 +153,38 @@ defmodule MongoEcto.Repo do
     @doc """
     Update existing record.
     """
-    @spec update(mongo_object) :: {:ok, mongo_record} | {:error, mongo_changeset}
-    def update(%{valid?: true, data: %{__struct__: schema, id: record_id}} = changeset)
+    @spec update(mongo_changeset) :: {:ok, mongo_record} | {:error, mongo_changeset}
+    def update(%Changeset{valid?: true, data: %{__struct__: schema, id: record_id}} = changeset)
         when is_bitstring(record_id) do
-        updated_record = changeset
+        record_to_update = changeset
         |> schema.field_timestamp(:updated_at)
         |> schema.apply_changes
-        |> Map.update!(:inserted_at, &(ecto_timestamp_to_datetime(&1)))
+
+        to_update = Map.from_struct(record_to_update)
+        |> convert_types_with(&to_mongo_type/1)
 
         bson_record_id = to_mongo_id(record_id)
         result = Mongo.replace_one(
             MongoEcto,
             schema.collection_name,
             %{_id: bson_record_id},
-            Map.from_struct(updated_record)
+            to_update
         )
         case result do
             {:ok, %Mongo.UpdateResult{matched_count: 1, modified_count: 1, upserted_id: nil}} ->
-                {:ok, updated_record}
+                {:ok, record_to_update}
             {:error, mongo_error} ->
                 Logger.error fn -> "Mongo Update Error: " <> inspect(mongo_error) end
                 changeset = Changeset.add_error(changeset, :id, "failed to update existing record")
                 {:error, changeset}
             _ ->
-                {:ok, updated_record}
+                {:ok, record_to_update}
         end
     end
-    def update(%{valid?: false} = changeset) do
+    def update(%Changeset{valid?: false} = changeset) do
         {:error, changeset}
     end
-    def update(%{id: _record_id} = record) do
-        changeset = Ecto.Changeset.change(record)
-        update(changeset)
-    end
-    def update(changeset) do
+    def update(%Changeset{} = changeset) do
         changeset = Changeset.add_error(changeset, :id, "record doesn't existing in a database")
         {:error, changeset}
     end
@@ -193,8 +192,8 @@ defmodule MongoEcto.Repo do
     @doc """
     Update existing record, raise in case of error.
     """
-    @spec update!(mongo_object) :: mongo_record | no_return
-    def update!(changeset) do
+    @spec update!(mongo_changeset) :: mongo_record | no_return
+    def update!(%Changeset{} = changeset) do
         raise_if_changeset_errors update(changeset), "update"
     end
 
@@ -202,25 +201,22 @@ defmodule MongoEcto.Repo do
     @doc """
     Update existing record.
     """
-    @spec insert_or_update(mongo_object) :: {:ok, mongo_record} | {:error, mongo_changeset}
-    def insert_or_update(%{valid?: true, id: record_id} = changeset) when is_bitstring(record_id) do
+    @spec insert_or_update(mongo_changeset) :: {:ok, mongo_record} | {:error, mongo_changeset}
+    def insert_or_update(%Changeset{valid?: true, data: %{id: record_id}} = changeset)
+        when is_bitstring(record_id) do
         update(changeset)
     end
-    def insert_or_update(%{valid?: true} = changeset) do
+    def insert_or_update(%Changeset{valid?: true} = changeset) do
         insert(changeset)
     end
-    def insert_or_update(%{valid?: false} = changeset) do
+    def insert_or_update(%Changeset{valid?: false} = changeset) do
         {:error, changeset}
-    end
-    def insert_or_update(record) do
-        changeset = Ecto.Changeset.change(record)
-        insert_or_update(changeset)
     end
 
     @doc """
     Update existing record, raise in case of error.
     """
-    @spec insert_or_update!(mongo_object) :: mongo_record | no_return
+    @spec insert_or_update!(mongo_changeset) :: mongo_record | no_return
     def insert_or_update!(changeset) do
         raise_if_changeset_errors insert_or_update(changeset), "upsert"
     end
@@ -230,9 +226,9 @@ defmodule MongoEcto.Repo do
     Delete existing record.
     """
     @spec delete(mongo_object) :: {:ok, mongo_record} | {:error, mongo_changeset}
-    def delete(%{data: %{__struct__: schema}} = changeset) do
+    def delete(%Changeset{data: %{__struct__: schema, id: id}} = changeset) do
         record = schema.apply_changes(changeset)
-        delete(record)
+        delete(Map.put(record, :id, id))
     end
     def delete(%{id: record_id, __struct__: schema} = record) when is_bitstring(record_id) do
         record_id = to_mongo_id(record_id)
@@ -402,7 +398,6 @@ defmodule MongoEcto.Repo do
         |> Enum.to_list
     end
 
-
     # Ensure that returned map() record is the struct of the schema type.
     @spec cursor_record_to_struct(mongo_schema, map(), mongo_preload) :: mongo_record
     defp cursor_record_to_struct(schema, %{"_id" => %BSON.ObjectId{}} = model, preload \\ []) do
@@ -417,17 +412,16 @@ defmodule MongoEcto.Repo do
         preload(record, preload)
     end
 
-    # Ensure that inserted record is properly set.
-    @spec inserted_record_to_struct(map(), mongo_string_id) :: mongo_record
-    defp inserted_record_to_struct(record, id) do
-        record = Map.put(record, :id, id)
-        for {key, val} <- record, into: %{} do
-            case val do
-                %BSON.DateTime{utc: ts} -> {key, timestamp_to_datetime(ts)}
-                _ -> {key, val}
-            end
-        end
+    # Convert schema types to specific mongo type
+    @spec convert_types_with(mongo_schema, fun()) :: mongo_schema
+    defp convert_types_with(record, f) do
+        record |> Map.new(fn({attr, val}) -> {attr, f.(val)} end)
     end
+
+    # Convert type to specific mongo type
+    @spec to_mongo_type(any()) :: mongo_datatype
+    defp to_mongo_type(%Ecto.DateTime{} = dt), do: ecto_datetime_to_mongo(dt)
+    defp to_mongo_type(type), do: type
 
     # Convert integer timestamp to %Ecto.Datetime{}
     @spec timestamp_to_datetime(integer()) :: %Ecto.DateTime{}
@@ -439,8 +433,8 @@ defmodule MongoEcto.Repo do
     end
 
     # Convert integer timestamp to %Ecto.Datetime{}
-    @spec ecto_timestamp_to_datetime(%Ecto.DateTime{}) :: %BSON.DateTime{}
-    defp ecto_timestamp_to_datetime(ecto_timestamp = %Ecto.DateTime{}) do
+    @spec ecto_datetime_to_mongo(%Ecto.DateTime{}) :: %BSON.DateTime{}
+    defp ecto_datetime_to_mongo(ecto_timestamp = %Ecto.DateTime{}) do
         {:ok, datetime} = Ecto.DateTime.dump(ecto_timestamp)
         BSON.DateTime.from_datetime(datetime)
     end

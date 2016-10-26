@@ -25,5 +25,13 @@ The main difference is that you should use [Mongo queries](https://docs.mongodb.
 * `schema_record = MongoEcto.Repo.insert!(changeset)`
 * `schema_record = MongoEcto.Repo.delete!(changeset)`
 
+# Model
+* Add `use MongoEcto.Model, :model` to your Mongo models.
+* Define `@collection_name` with the name of the related mongo collection.
+* Define `@primary_key {:id, :binary_id, autogenerate: true}` to comply Mongo ObjectId UID.
+* Use `embedded_schema` instead of `schema` to define fields.
+
+Helper functions `field_timestamp/2` and `now_timestamp/0` can be used to set current timestamp, like: `Schema.field_timestamp(record, :inserted_at)`
+
 # Diclaimer
 This module is in it's early beta, use on your own risk.

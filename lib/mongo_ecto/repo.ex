@@ -375,9 +375,7 @@ defmodule MongoEcto.Repo do
 
     # Ensure that Mongo id is converted to a proper BSON object.
     @spec to_mongo_id(mongo_id) :: mongo_bson_id
-    defp to_mongo_id(%BSON.ObjectId{} = id) do
-        id
-    end
+    defp to_mongo_id(%BSON.ObjectId{} = id), do: id
     defp to_mongo_id(<< _ :: size(192)>> = string_id) do
         binary_id = Base.decode16!(string_id, case: :lower)
         to_mongo_id(binary_id)
@@ -385,10 +383,6 @@ defmodule MongoEcto.Repo do
     defp to_mongo_id(<< _ :: size(96)>> = binary_id) do
         %BSON.ObjectId{value: binary_id}
     end
-    defp to_mongo_id(id) do
-        BSON.Decoder.decode(id)
-    end
-
 
     # Query mongo for data
     @spec query(String.t, mongo_query, mongo_options) :: [map()]
@@ -400,14 +394,21 @@ defmodule MongoEcto.Repo do
 
     # Ensure that returned map() record is the struct of the schema type.
     @spec cursor_record_to_struct(mongo_schema, map(), mongo_preload) :: mongo_record
-    defp cursor_record_to_struct(schema, %{"_id" => %BSON.ObjectId{}} = model, preload \\ []) do
+    defp cursor_record_to_struct(schema,
+        %{"_id" => %BSON.ObjectId{value: id}} = model,
+        preload \\ []) do
+        model = Map.delete(model, "_id")
         model = for {key, val} <- model, into: %{} do
             case val do
-                %BSON.ObjectId{value: binary_id} -> {:id, mongo_id_to_string(binary_id)}
-                %BSON.DateTime{utc: ts} -> {String.to_atom(key), timestamp_to_datetime(ts)}
-                _ -> {String.to_atom(key), val}
+                %BSON.ObjectId{value: binary_id} ->
+                    {String.to_atom(key), mongo_id_to_string(binary_id)}
+                %BSON.DateTime{utc: ts} ->
+                    {String.to_atom(key), timestamp_to_datetime(ts)}
+                _ ->
+                    {String.to_atom(key), val}
             end
         end
+        model = Map.put(model, :id, mongo_id_to_string(id))
         record = Kernel.struct(schema, model)
         preload(record, preload)
     end
@@ -421,6 +422,8 @@ defmodule MongoEcto.Repo do
     # Convert type to specific mongo type
     @spec to_mongo_type(any()) :: mongo_datatype
     defp to_mongo_type(%Ecto.DateTime{} = dt), do: ecto_datetime_to_mongo(dt)
+    defp to_mongo_type(<< _ :: size(192)>> = binary), do: to_mongo_id(binary)
+    defp to_mongo_type(<< _ :: size(96)>> = binary), do: to_mongo_id(binary)
     defp to_mongo_type(type), do: type
 
     # Convert integer timestamp to %Ecto.Datetime{}

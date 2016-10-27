@@ -119,7 +119,11 @@ defmodule MongoEcto.Repo do
         |> schema.field_timestamp(:updated_at)
         |> schema.apply_changes
 
-        new_record_map = Map.from_struct(new_record) |> convert_types_with(&to_mongo_type/1)
+        foreign_keys = get_foreign_keys(new_record)
+        new_record_map = Map.from_struct(new_record)
+        |> convert_types_with(&to_mongo_type/1)
+        |> convert_types_for(foreign_keys, &to_mongo_id/1)
+
         result = Mongo.insert_one(MongoEcto, schema.collection_name, new_record_map)
         case result do
             {:ok, %{inserted_id: bson_id}} ->
@@ -160,8 +164,10 @@ defmodule MongoEcto.Repo do
         |> schema.field_timestamp(:updated_at)
         |> schema.apply_changes
 
+        foreign_keys = get_foreign_keys(record_to_update)
         to_update = Map.from_struct(record_to_update)
         |> convert_types_with(&to_mongo_type/1)
+        |> convert_types_for(foreign_keys, &to_mongo_id/1)
 
         bson_record_id = to_mongo_id(record_id)
         result = Mongo.replace_one(
@@ -414,16 +420,33 @@ defmodule MongoEcto.Repo do
     end
 
     # Convert schema types to specific mongo type
+    @spec get_foreign_keys(mongo_record) :: [atom()]
+    defp get_foreign_keys(%{__struct__: schema} = record) do
+        schema.__schema__(:associations)|> Enum.reduce([], fn(assoc, acc) ->
+            case schema.__schema__(:association, assoc) do
+                %Ecto.Association.BelongsTo{owner_key: key} -> [key|acc]
+                _ -> acc
+            end
+        end)
+    end
+
+    # Convert schema types to specific mongo types
     @spec convert_types_with(mongo_schema, fun()) :: mongo_schema
     defp convert_types_with(record, f) do
         record |> Map.new(fn({attr, val}) -> {attr, f.(val)} end)
     end
 
+    # Convert specified types in schema to specific mongo types
+    @spec convert_types_for(mongo_schema, [atom()], fun()) :: mongo_schema
+    defp convert_types_for(record, fields, f) do
+        Enum.reduce fields, record, fn(field, acc) ->
+            Map.update!(acc, field, f)
+        end
+    end
+
     # Convert type to specific mongo type
     @spec to_mongo_type(any()) :: mongo_datatype
     defp to_mongo_type(%Ecto.DateTime{} = dt), do: ecto_datetime_to_mongo(dt)
-    defp to_mongo_type(<< _ :: size(192)>> = binary), do: to_mongo_id(binary)
-    defp to_mongo_type(<< _ :: size(96)>> = binary), do: to_mongo_id(binary)
     defp to_mongo_type(type), do: type
 
     # Convert integer timestamp to %Ecto.Datetime{}

@@ -49,13 +49,16 @@ defmodule MongoEcto.Repo do
     Get record by id.
     """
     @spec get(mongo_schema, mongo_id) :: mongo_record | nil | no_return
-    def get(_schema, nil) do
-        nil
-    end
+    def get(_schema, nil), do: nil
     def get(schema, id) do
-        id = to_mongo_id(id)
-        get_by(schema, %{_id: id})
+        if is_mongo_id(id) do
+            id = to_mongo_id(id)
+            get_by(schema, %{_id: id})
+        else
+            raise Ecto.InvalidMongoIdError
+        end
     end
+
 
     @doc """
     Get record by id, raise if not found.
@@ -77,6 +80,7 @@ defmodule MongoEcto.Repo do
             _ -> nil
         end
     end
+
 
     @doc """
     Get record by query, raise if not found.
@@ -100,6 +104,7 @@ defmodule MongoEcto.Repo do
         end
     end
 
+
     @doc """
     Get single record by query, raise if not found.
     """
@@ -115,8 +120,7 @@ defmodule MongoEcto.Repo do
     @spec insert(mongo_object) :: {:ok, mongo_record} | {:error, mongo_changeset}
     def insert(%Changeset{valid?: true, data: %{__struct__: schema}} = changeset) do
         new_record = changeset
-        |> schema.field_timestamp(:inserted_at)
-        |> schema.field_timestamp(:updated_at)
+        |> autogenerate(:autogenerate)
         |> schema.apply_changes
 
         foreign_keys = get_foreign_keys(new_record)
@@ -145,6 +149,7 @@ defmodule MongoEcto.Repo do
         insert(changeset)
     end
 
+
     @doc """
     Add new record, raise in case of error.
     """
@@ -161,7 +166,7 @@ defmodule MongoEcto.Repo do
     def update(%Changeset{valid?: true, data: %{__struct__: schema, id: record_id}} = changeset)
         when is_bitstring(record_id) do
         record_to_update = changeset
-        |> schema.field_timestamp(:updated_at)
+        |> autogenerate(:autoupdate)
         |> schema.apply_changes
 
         foreign_keys = get_foreign_keys(record_to_update)
@@ -178,22 +183,25 @@ defmodule MongoEcto.Repo do
         )
         case result do
             {:ok, %Mongo.UpdateResult{matched_count: 1, modified_count: 1, upserted_id: nil}} ->
-                {:ok, record_to_update}
+                {:ok, Map.put(record_to_update, :id, record_id)}
             {:error, mongo_error} ->
                 Logger.error fn -> "Mongo Update Error: " <> inspect(mongo_error) end
                 changeset = Changeset.add_error(changeset, :id, "failed to update existing record")
                 {:error, changeset}
             _ ->
-                {:ok, record_to_update}
+                {:ok, Map.put(record_to_update, :id, record_id)}
         end
     end
     def update(%Changeset{valid?: false} = changeset) do
         {:error, changeset}
     end
-    def update(%Changeset{} = changeset) do
-        changeset = Changeset.add_error(changeset, :id, "record doesn't existing in a database")
-        {:error, changeset}
+    def update(%Changeset{data: %{id: nil} = record} = _changeset) do
+         raise Ecto.NoPrimaryKeyValueError, struct: record
     end
+    def update(%Changeset{data: %{__struct__: schema}} = _changeset) do
+        raise Ecto.NoPrimaryKeyFieldError, schema: schema
+    end
+
 
     @doc """
     Update existing record, raise in case of error.
@@ -218,6 +226,7 @@ defmodule MongoEcto.Repo do
     def insert_or_update(%Changeset{valid?: false} = changeset) do
         {:error, changeset}
     end
+
 
     @doc """
     Update existing record, raise in case of error.
@@ -249,12 +258,13 @@ defmodule MongoEcto.Repo do
                 {:error, changeset}
         end
     end
-    def delete(record) do
-        changeset = record
-        |> Changeset.change
-        |> Changeset.add_error(:id, "record doesn't existing in a database")
-        {:error, changeset}
+    def delete(%{id: nil, __struct__: _schema} = record) do
+        raise Ecto.NoPrimaryKeyValueError, struct: record
     end
+    def delete(%{__struct__: schema} = _record) do
+        raise Ecto.NoPrimaryKeyFieldError, schema: schema
+    end
+
 
     @doc """
     Delete existing record, raise in case of error.
@@ -353,14 +363,16 @@ defmodule MongoEcto.Repo do
         end)
     end
 
+
     # Raise Ecto.NoResultsError if there is no results
     @spec raise_if_no_results(mongo_record | nil) :: mongo_record | no_return
     defp raise_if_no_results(result) do
         case result do
-            nil -> raise Ecto.NoResultsError, message: "no results found"
+            nil -> raise %Ecto.NoResultsError{message: "no results found"}
             record -> record
         end
     end
+
 
     # Convert changeset errors, by raising Ecto.InvalidChangesetError
     # Useful for bang (!) functions
@@ -371,13 +383,45 @@ defmodule MongoEcto.Repo do
                 record
             {:error, changeset} ->
                 Logger.error fn ->
-                    "Mongo #{action} Error: " <> changeset_errors_to_string(changeset)
+                    "Mongo #{action} Error: " <> inspect changeset_errors_to_string(changeset)
                 end
-                raise Ecto.InvalidChangesetError, message: "failed to #{action} record"
+                raise Ecto.InvalidChangesetError, [action: action, changeset: changeset]
             _ ->
-                raise Ecto.InvalidChangesetError, message: "failed to #{action} record"
+                raise Ecto.InvalidChangesetError, action: action
         end
     end
+
+
+    #Generates automatic gereted fields (such as updated_at, inserted_at etc.)
+    @spec autogenerate(mongo_changeset, atom()) :: mongo_changeset
+    defp autogenerate(%Changeset{data: %{__struct__: schema}} = changeset, action) do
+        changes = Enum.reduce schema.__schema__(action), %{}, fn
+            {k, {mod, fun, args}}, acc ->
+                Map.put(acc, k, apply(mod, fun, args))
+        end
+        Ecto.Changeset.change(changeset, changes)
+    end
+
+
+    #Checks if id is a correct mongo_id type
+    @spec is_mongo_id(mongo_id) :: boolean()
+    defp is_mongo_id(id) do
+      convertable_to_mongo_id(id) or is_mongo_bson_id(id)
+    end
+
+
+    #Checks if id convertable to BSON.ObjectId
+    @spec convertable_to_mongo_id(mongo_id) :: boolean()
+    defp convertable_to_mongo_id(<< _ :: size(192)>>), do: true
+    defp convertable_to_mongo_id(<< _ :: size(96)>>), do: true
+    defp convertable_to_mongo_id(_id), do: false
+
+
+    #Checks if id is a BSON.ObjectId type
+    @spec is_mongo_bson_id(mongo_id) :: boolean()
+    defp is_mongo_bson_id(%BSON.ObjectId{} = _id), do: true
+    defp is_mongo_bson_id(_id), do: false
+
 
     # Ensure that Mongo id is converted to a proper BSON object.
     @spec to_mongo_id(mongo_id) :: mongo_bson_id
@@ -390,6 +434,7 @@ defmodule MongoEcto.Repo do
         %BSON.ObjectId{value: binary_id}
     end
 
+
     # Query mongo for data
     @spec query(String.t, mongo_query, mongo_options) :: [map()]
     defp query(collection_name, query, options) do
@@ -397,6 +442,7 @@ defmodule MongoEcto.Repo do
         mongo_cursor
         |> Enum.to_list
     end
+
 
     # Ensure that returned map() record is the struct of the schema type.
     @spec cursor_record_to_struct(mongo_schema, map(), mongo_preload) :: mongo_record
@@ -419,9 +465,10 @@ defmodule MongoEcto.Repo do
         preload(record, preload)
     end
 
+
     # Convert schema types to specific mongo type
     @spec get_foreign_keys(mongo_record) :: [atom()]
-    defp get_foreign_keys(%{__struct__: schema} = record) do
+    defp get_foreign_keys(%{__struct__: schema} = _record) do
         schema.__schema__(:associations)|> Enum.reduce([], fn(assoc, acc) ->
             case schema.__schema__(:association, assoc) do
                 %Ecto.Association.BelongsTo{owner_key: key} -> [key|acc]
@@ -430,11 +477,13 @@ defmodule MongoEcto.Repo do
         end)
     end
 
+
     # Convert schema types to specific mongo types
     @spec convert_types_with(mongo_schema, fun()) :: mongo_schema
     defp convert_types_with(record, f) do
         record |> Map.new(fn({attr, val}) -> {attr, f.(val)} end)
     end
+
 
     # Convert specified types in schema to specific mongo types
     @spec convert_types_for(mongo_schema, [atom()], fun()) :: mongo_schema
@@ -444,10 +493,12 @@ defmodule MongoEcto.Repo do
         end
     end
 
+
     # Convert type to specific mongo type
     @spec to_mongo_type(any()) :: mongo_datatype
     defp to_mongo_type(%Ecto.DateTime{} = dt), do: ecto_datetime_to_mongo(dt)
     defp to_mongo_type(type), do: type
+
 
     # Convert integer timestamp to %Ecto.Datetime{}
     @spec timestamp_to_datetime(integer()) :: %Ecto.DateTime{}
@@ -457,6 +508,7 @@ defmodule MongoEcto.Repo do
         usec = rem(timestamp, 1000) * 1000
         %{Ecto.DateTime.from_erl(datetime) | usec: usec}
     end
+
 
     # Convert integer timestamp to %Ecto.Datetime{}
     @spec ecto_datetime_to_mongo(%Ecto.DateTime{}) :: %BSON.DateTime{}

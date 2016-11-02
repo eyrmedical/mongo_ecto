@@ -31,6 +31,8 @@ defmodule MongoEcto.Repo.ValidateTest do
 
      test "all returns list" do
         assert is_list(TestRepo.all(Account))
+        query = %{"$query": %{"$or": [%{account_id: "777"}, %{account_id: "778"}]}}
+        assert is_list(TestRepo.all(Account, query))
      end
 
     test "get raises exception with incorrect mongo id" do
@@ -49,6 +51,39 @@ defmodule MongoEcto.Repo.ValidateTest do
         message = "no results found"
         assert_raise Ecto.NoResultsError, message, fn ->
             TestRepo.get!(Account, "ffffffffffffffffffffffff")
+        end
+        assert_raise Ecto.NoResultsError, message, fn ->
+            TestRepo.get!(Account, nil)
+        end
+    end
+
+    test "get_by returns nil when nothing found" do
+        assert TestRepo.get_by(Account, %{"email" => "abc"}) == nil
+        assert TestRepo.get_by(Account, %{"nonexistent" => "abc"}) == nil
+    end
+
+    test "validates get_by!" do
+        message = "no results found"
+        assert_raise Ecto.NoResultsError, message, fn ->
+            TestRepo.get_by!(Account, %{"email" => "abc"})
+        end
+        assert_raise Ecto.NoResultsError, message, fn ->
+            TestRepo.get_by!(Account, %{"nonexistent" => "abc"})
+        end
+    end
+
+    test "one returns nil when nothing found" do
+        assert TestRepo.one(Account, %{"email" => "abc"}) == nil
+        assert TestRepo.one(Account, %{"nonexistent" => "abc"}) == nil
+    end
+
+    test "validates one!" do
+        message = "no results found"
+        assert_raise Ecto.NoResultsError, message, fn ->
+            TestRepo.one!(Account, %{"email" => "abc"})
+        end
+        assert_raise Ecto.NoResultsError, message, fn ->
+            TestRepo.one!(Account, %{"nonexistent" => "abc"})
         end
     end
 
@@ -83,10 +118,12 @@ defmodule MongoEcto.Repo.ValidateTest do
             TestRepo.delete(changeset)
     end
 
-
     test "validates delete!" do
         account = %Account{id: "ffffffffffffffffffffffff"}
         changeset = Ecto.Changeset.change(account, %{})
+        assert_raise Ecto.InvalidChangesetError, fn ->
+            TestRepo.delete!(account)
+        end
         assert_raise Ecto.InvalidChangesetError, fn ->
             TestRepo.delete!(changeset)
         end

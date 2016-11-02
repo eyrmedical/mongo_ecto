@@ -64,6 +64,7 @@ defmodule MongoEcto.Repo do
     Get record by id, raise if not found.
     """
     @spec get!(mongo_schema, mongo_id) :: mongo_record | no_return
+    def get!(schema, nil), do: raise %Ecto.NoResultsError{message: "no results found"}
     def get!(schema, id) do
         raise_if_no_results get(schema, id)
     end
@@ -394,12 +395,12 @@ defmodule MongoEcto.Repo do
 
     #Generates automatic gereted fields (such as updated_at, inserted_at etc.)
     @spec autogenerate(mongo_changeset, atom()) :: mongo_changeset
-    defp autogenerate(%Changeset{data: %{__struct__: schema}} = changeset, action) do
-        changes = Enum.reduce schema.__schema__(action), %{}, fn
+    defp autogenerate(%Changeset{data: %{__struct__: schema}, changes: changes} = changeset, action) do
+        new_changes = Enum.reduce schema.__schema__(action), changes, fn
             {k, {mod, fun, args}}, acc ->
-                Map.put(acc, k, apply(mod, fun, args))
+                Map.put_new(acc, k, apply(mod, fun, args))
         end
-        Ecto.Changeset.change(changeset, changes)
+        Ecto.Changeset.change(changeset, new_changes)
     end
 
 

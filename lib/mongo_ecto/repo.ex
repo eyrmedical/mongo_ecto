@@ -393,8 +393,6 @@ defmodule MongoEcto.Repo do
     # Query mongo for data.
     @spec query(String.t, mongo_query, mongo_options) :: [map()]
     defp query(collection_name, query, options) do
-        IO.inspect "QUERY"
-        IO.inspect normalise_query_map(query)
         mongo_cursor = Mongo.find(MongoEcto, collection_name, normalise_query_map(query), options)
         mongo_cursor
         |> Enum.to_list

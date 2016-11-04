@@ -409,6 +409,9 @@ defmodule MongoEcto.Repo do
     defp normalise_query_chunk({key, %BSON.ObjectId{} = value}, acc) do
         Map.put acc, key, value
     end
+    defp normalise_query_chunk({key, %BSON.DateTime{} = value}, acc) do
+        Map.put acc, key, value
+    end
     defp normalise_query_chunk({key, value}, acc) when is_map(value) do
         Map.put acc, key, normalise_query_map(value)
     end

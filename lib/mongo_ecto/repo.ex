@@ -329,7 +329,7 @@ defmodule MongoEcto.Repo do
         relationship: :parent,
         field: assoc_field,
         owner_key: parent_key,
-        related_key: child_key,
+        related_key: _child_key,
         related: parentSchema
     }) do
         parent = get(parentSchema, Map.get(record, parent_key))
@@ -390,13 +390,38 @@ defmodule MongoEcto.Repo do
         %BSON.ObjectId{value: binary_id}
     end
 
-    # Query mongo for data
+    # Query mongo for data.
     @spec query(String.t, mongo_query, mongo_options) :: [map()]
     defp query(collection_name, query, options) do
-        mongo_cursor = Mongo.find(MongoEcto, collection_name, query, options)
+        mongo_cursor = Mongo.find(MongoEcto, collection_name, normalise_query_map(query), options)
         mongo_cursor
         |> Enum.to_list
     end
+
+    # Normalise query to fit MongoDb.
+    @spec normalise_query_map(mongo_query) :: mongo_query
+    defp normalise_query_map(query) do
+        Enum.reduce query, %{}, &normalise_query_chunk/2
+    end
+
+    # Normalise query chunk
+    @spec normalise_query_chunk({atom(), any()}, mongo_query) :: mongo_query
+    defp normalise_query_chunk({key, %BSON.ObjectId{} = value}, acc) do
+        Map.put acc, key, value
+    end
+    defp normalise_query_chunk({key, value}, acc) when is_map(value) do
+        Map.put acc, key, normalise_query_map(value)
+    end
+    defp normalise_query_chunk({key, << _ :: size(96)>> = value}, acc) do
+        Map.put acc, key, to_mongo_id(value)
+    end
+    defp normalise_query_chunk({key, << _ :: size(192)>> = value}, acc) do
+        Map.put acc, key, to_mongo_id(value)
+    end
+    defp normalise_query_chunk({key, value}, acc) do
+        Map.put acc, key, value
+    end
+    
 
     # Ensure that returned map() record is the struct of the schema type.
     @spec cursor_record_to_struct(mongo_schema, map(), mongo_preload) :: mongo_record
@@ -421,7 +446,7 @@ defmodule MongoEcto.Repo do
 
     # Convert schema types to specific mongo type
     @spec get_foreign_keys(mongo_record) :: [atom()]
-    defp get_foreign_keys(%{__struct__: schema} = record) do
+    defp get_foreign_keys(%{__struct__: schema}) do
         schema.__schema__(:associations)|> Enum.reduce([], fn(assoc, acc) ->
             case schema.__schema__(:association, assoc) do
                 %Ecto.Association.BelongsTo{owner_key: key} -> [key|acc]

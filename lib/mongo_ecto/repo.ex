@@ -178,13 +178,13 @@ defmodule MongoEcto.Repo do
         )
         case result do
             {:ok, %Mongo.UpdateResult{matched_count: 1, modified_count: 1, upserted_id: nil}} ->
-                {:ok, record_to_update}
+                {:ok, Map.put(record_to_update, :id, record_id)}
             {:error, mongo_error} ->
                 Logger.error fn -> "Mongo Update Error: " <> inspect(mongo_error) end
                 changeset = Changeset.add_error(changeset, :id, "failed to update existing record")
                 {:error, changeset}
             _ ->
-                {:ok, record_to_update}
+                {:ok, Map.put(record_to_update, :id, record_id)}
         end
     end
     def update(%Changeset{valid?: false} = changeset) do

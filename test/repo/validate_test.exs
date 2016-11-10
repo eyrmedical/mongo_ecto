@@ -48,11 +48,10 @@ defmodule MongoEcto.Repo.ValidateTest do
     end
 
     test "validates get!" do
-        message = "no results found"
-        assert_raise Ecto.NoResultsError, message, fn ->
+        assert_raise Ecto.NoResultsError, fn ->
             TestRepo.get!(Account, "ffffffffffffffffffffffff")
         end
-        assert_raise Ecto.NoResultsError, message, fn ->
+        assert_raise Ecto.NoResultsError, fn ->
             TestRepo.get!(Account, nil)
         end
     end
@@ -63,11 +62,10 @@ defmodule MongoEcto.Repo.ValidateTest do
     end
 
     test "validates get_by!" do
-        message = "no results found"
-        assert_raise Ecto.NoResultsError, message, fn ->
+        assert_raise Ecto.NoResultsError, fn ->
             TestRepo.get_by!(Account, %{"email" => "abc"})
         end
-        assert_raise Ecto.NoResultsError, message, fn ->
+        assert_raise Ecto.NoResultsError, fn ->
             TestRepo.get_by!(Account, %{"nonexistent" => "abc"})
         end
     end
@@ -78,11 +76,10 @@ defmodule MongoEcto.Repo.ValidateTest do
     end
 
     test "validates one!" do
-        message = "no results found"
-        assert_raise Ecto.NoResultsError, message, fn ->
+        assert_raise Ecto.NoResultsError, fn ->
             TestRepo.one!(Account, %{"email" => "abc"})
         end
-        assert_raise Ecto.NoResultsError, message, fn ->
+        assert_raise Ecto.NoResultsError, fn ->
             TestRepo.one!(Account, %{"nonexistent" => "abc"})
         end
     end

@@ -66,7 +66,7 @@ defmodule MongoEcto.Repo do
     @spec get!(mongo_schema, mongo_id) :: mongo_record | no_return
     def get!(schema, nil), do: raise %Ecto.NoResultsError{message: "no results found"}
     def get!(schema, id) do
-        raise_if_no_results get(schema, id)
+        raise_if_no_results schema, get(schema, id)
     end
 
 
@@ -88,7 +88,7 @@ defmodule MongoEcto.Repo do
     """
     @spec get_by!(mongo_schema, mongo_query) :: mongo_record | no_return
     def get_by!(schema, query \\ %{}) do
-        raise_if_no_results get_by(schema, query)
+        raise_if_no_results schema, get_by(schema, query)
     end
 
 
@@ -111,7 +111,7 @@ defmodule MongoEcto.Repo do
     """
     @spec one!(mongo_schema, mongo_query) :: mongo_record | no_return
     def one!(schema, query \\ %{}) do
-        raise_if_no_results one(schema, query)
+        raise_if_no_results schema, one(schema, query)
     end
 
 
@@ -315,9 +315,7 @@ defmodule MongoEcto.Repo do
         children = Map.get(record, direct_child)
         children = Enum.map children, &(preload(&1, direct_grandc))
         all_grandc = Enum.reduce children, [], fn(child, acc) ->
-            grandc = Map.get(child, direct_grandc)
-            grandc = if is_list(grandc), do: grandc, else: [grandc]
-            acc ++ grandc
+            acc ++ Map.get(child, direct_grandc)
         end
         
         record
@@ -368,10 +366,10 @@ defmodule MongoEcto.Repo do
 
 
     # Raise Ecto.NoResultsError if there is no results
-    @spec raise_if_no_results(mongo_record | nil) :: mongo_record | no_return
-    defp raise_if_no_results(result) do
+    @spec raise_if_no_results(mongo_schema, mongo_record | nil) :: mongo_record | no_return
+    defp raise_if_no_results(schema, result) do
         case result do
-            nil -> raise %Ecto.NoResultsError{message: "no results found"}
+            nil -> raise Ecto.NoResultsError.exception([queryable: schema])
             record -> record
         end
     end
@@ -441,55 +439,32 @@ defmodule MongoEcto.Repo do
     # Query mongo for data.
     @spec query(String.t, mongo_query, mongo_options) :: [map()]
     defp query(collection_name, query, options) do
-        mongo_cursor = Mongo.find(MongoEcto, collection_name, normalise_query_map(query), options)
+        mongo_cursor = Mongo.find(MongoEcto, collection_name, query, options)
         mongo_cursor
         |> Enum.to_list
     end
-
-
-    # Normalise query to fit MongoDb.
-    @spec normalise_query_map(mongo_query) :: mongo_query
-    defp normalise_query_map(query) do
-        Enum.reduce query, %{}, &normalise_query_chunk/2
-    end
-
-    # Normalise query chunk
-    @spec normalise_query_chunk({atom(), any()}, mongo_query) :: mongo_query
-    defp normalise_query_chunk({key, %BSON.ObjectId{} = value}, acc) do
-        Map.put acc, key, value
-    end
-    defp normalise_query_chunk({key, %BSON.DateTime{} = value}, acc) do
-        Map.put acc, key, value
-    end
-    defp normalise_query_chunk({key, value}, acc) when is_map(value) do
-        Map.put acc, key, normalise_query_map(value)
-    end
-    defp normalise_query_chunk({key, << _ :: size(96)>> = value}, acc) do
-        Map.put acc, key, to_mongo_id(value)
-    end
-    defp normalise_query_chunk({key, << _ :: size(192)>> = value}, acc) do
-        Map.put acc, key, to_mongo_id(value)
-    end
-    defp normalise_query_chunk({key, value}, acc) do
-        Map.put acc, key, value
-    end
-    
 
 
     # Ensure that returned map() record is the struct of the schema type.
     @spec cursor_record_to_struct(mongo_schema, map(), mongo_preload) :: mongo_record
     defp cursor_record_to_struct(schema,
         %{"_id" => %BSON.ObjectId{value: id}} = model,
-        preload \\ []) do
+        preload) do
         model = Map.delete(model, "_id")
         model = for {key, val} <- model, into: %{} do
+            atom_key = String.to_atom(key)
             case val do
                 %BSON.ObjectId{value: binary_id} ->
-                    {String.to_atom(key), mongo_id_to_string(binary_id)}
+                    {atom_key, mongo_id_to_string(binary_id)}
                 %BSON.DateTime{utc: ts} ->
-                    {String.to_atom(key), timestamp_to_datetime(ts)}
+                    case schema.__schema__(:type, atom_key) do
+                        Ecto.Date ->
+                            {atom_key, timestamp_to_date(ts)}
+                        _ ->
+                            {atom_key, timestamp_to_datetime(ts)}
+                    end
                 _ ->
-                    {String.to_atom(key), val}
+                    {atom_key, val}
             end
         end
         model = Map.put(model, :id, mongo_id_to_string(id))
@@ -528,6 +503,7 @@ defmodule MongoEcto.Repo do
 
     # Convert type to specific mongo type
     @spec to_mongo_type(any()) :: mongo_datatype
+    defp to_mongo_type(%Ecto.Date{} = dt), do: ecto_date_to_mongo(dt)
     defp to_mongo_type(%Ecto.DateTime{} = dt), do: ecto_datetime_to_mongo(dt)
     defp to_mongo_type(type), do: type
 
@@ -542,7 +518,22 @@ defmodule MongoEcto.Repo do
     end
 
 
-    # Convert integer timestamp to %Ecto.Datetime{}
+    # Convert integer timestamp to %Ecto.Date{}
+    @spec timestamp_to_date(integer()) :: %Ecto.Date{}
+    defp timestamp_to_date(timestamp) do
+        epoch = :calendar.datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
+        {date, _} = :calendar.gregorian_seconds_to_datetime(epoch + div(timestamp, 1000))
+        Ecto.Date.from_erl(date)
+    end
+
+    # Convert %Ecto.Date{} to BSON.DateTime object
+    @spec ecto_date_to_mongo(%Ecto.Date{}) :: %BSON.DateTime{}
+    defp ecto_date_to_mongo(ecto_timestamp = %Ecto.Date{}) do
+        {:ok, date} = Ecto.Date.dump(ecto_timestamp)
+        BSON.DateTime.from_datetime({date, {0, 0, 0, 0}})
+    end
+
+    # Convert %Ecto.Datetime{} to BSON.DateTime object
     @spec ecto_datetime_to_mongo(%Ecto.DateTime{}) :: %BSON.DateTime{}
     defp ecto_datetime_to_mongo(ecto_timestamp = %Ecto.DateTime{}) do
         {:ok, datetime} = Ecto.DateTime.dump(ecto_timestamp)

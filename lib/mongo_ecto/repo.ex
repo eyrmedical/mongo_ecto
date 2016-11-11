@@ -115,7 +115,7 @@ defmodule MongoEcto.Repo do
     end
 
 
- @doc """
+    @doc """
     Add new record.
     """
     @spec insert(mongo_object) :: {:ok, mongo_record} | {:error, mongo_changeset}
@@ -439,9 +439,33 @@ defmodule MongoEcto.Repo do
     # Query mongo for data.
     @spec query(String.t, mongo_query, mongo_options) :: [map()]
     defp query(collection_name, query, options) do
-        mongo_cursor = Mongo.find(MongoEcto, collection_name, query, options)
+        mongo_cursor = Mongo.find(MongoEcto, collection_name, normalise_query_map(query), options)
         mongo_cursor
         |> Enum.to_list
+    end
+
+    # Normalise query to fit MongoDb.
+    @spec normalise_query_map(mongo_query) :: mongo_query
+    defp normalise_query_map(query) do
+        Enum.reduce query, %{}, &normalise_query_chunk/2
+    end
+
+    # Normalise query chunk
+    @spec normalise_query_chunk({atom(), any()}, mongo_query) :: mongo_query
+    defp normalise_query_chunk({key, %BSON.ObjectId{} = value}, acc) do
+        Map.put acc, key, value
+    end
+    defp normalise_query_chunk({key, value}, acc) when is_map(value) do
+        Map.put acc, key, normalise_query_map(value)
+    end
+    defp normalise_query_chunk({key, << _ :: size(96)>> = value}, acc) do
+        Map.put acc, key, to_mongo_id(value)
+    end
+    defp normalise_query_chunk({key, << _ :: size(192)>> = value}, acc) do
+        Map.put acc, key, to_mongo_id(value)
+    end
+    defp normalise_query_chunk({key, value}, acc) do
+        Map.put acc, key, value
     end
 
 

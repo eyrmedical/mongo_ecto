@@ -426,6 +426,7 @@ defmodule MongoEcto.Repo do
 
     # Ensure that Mongo id is converted to a proper BSON object.
     @spec to_mongo_id(mongo_id) :: mongo_bson_id
+    defp to_mongo_id(nil), do: nil
     defp to_mongo_id(%BSON.ObjectId{} = id), do: id
     defp to_mongo_id(<< _ :: size(192)>> = string_id) do
         binary_id = Base.decode16!(string_id, case: :lower)

@@ -184,4 +184,8 @@ defmodule MongoEcto.Repo.ValidateTest do
         assert account
         assert TestRepo.all(Account, %{_id: test_id}) == [account]
     end
+
+    test "queries with non-ObjectId strings of 192 bits" do
+        assert TestRepo.all(Account, %{email: "voronchuk@starbuildr.com"}) == []
+    end
 end

@@ -3,7 +3,7 @@ defmodule MongoEcto.Mixfile do
 
   def project do
     [app: :mongo_ecto,
-     version: "0.1.7",
+     version: "0.1.8",
      elixir: "~> 1.3",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
@@ -18,7 +18,7 @@ defmodule MongoEcto.Mixfile do
 
   defp deps do
     [{:ecto, "~> 2.0.0"},
-     {:mongodb, ">= 0.0.0"},
+     {:mongodb, "0.1.1"},
      {:poolboy, ">= 0.0.0"}]
   end
 end

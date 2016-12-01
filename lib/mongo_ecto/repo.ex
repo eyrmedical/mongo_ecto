@@ -10,7 +10,7 @@ defmodule MongoEcto.Repo do
     @type mongo_bson_id :: %BSON.ObjectId{}
     @type mongo_string_id :: << _ :: 192 >> 
     @type mongo_binary_id :: << _ :: 96 >>
-    @type mongo_id :: mongo_string_id | mongo_binary_id | mongo_bson_id
+    @type mongo_id :: mongo_string_id | mongo_binary_id | mongo_bson_id | String.t | integer
     @type mongo_object_result :: {:ok, Ecto.Schema.t} | {:error, Ecto.Changeset.t}
     @type mongo_changeset :: Ecto.Changeset.t
     @type mongo_record :: Ecto.Schema.t
@@ -131,7 +131,7 @@ defmodule MongoEcto.Repo do
 
         result = Mongo.insert_one(MongoEcto, schema.collection_name, new_record_map)
         case result do
-            {:ok, %{inserted_id: bson_id}} ->
+            {:ok, %{inserted_id: bson_id} = res} ->
                 inserted_record = Map.put(new_record, :id, mongo_id_to_string(bson_id))
                 {:ok, inserted_record}
             {:error, mongo_error} ->
@@ -299,8 +299,11 @@ defmodule MongoEcto.Repo do
     def mongo_id_to_string(%BSON.ObjectId{value: bson_id}) do
         mongo_id_to_string(bson_id)
     end
-    def mongo_id_to_string(mongo_id) do
+    def mongo_id_to_string(<< _ :: size(96)>> = mongo_id) do
         Base.encode16(mongo_id, case: :lower)
+    end
+    def mongo_id_to_string(mongo_id) when is_bitstring(mongo_id) do
+        mongo_id
     end
 
 
@@ -407,12 +410,14 @@ defmodule MongoEcto.Repo do
     #Checks if id is a correct mongo_id type
     @spec is_mongo_id(mongo_id) :: boolean()
     defp is_mongo_id(id) do
-      convertable_to_mongo_id(id) or is_mongo_bson_id(id)
+        convertable_to_mongo_id(id) or is_mongo_bson_id(id)
     end
 
 
     #Checks if id convertable to BSON.ObjectId
     @spec convertable_to_mongo_id(mongo_id) :: boolean()
+    defp convertable_to_mongo_id(mongo_id) when is_bitstring(mongo_id), do: true
+    defp convertable_to_mongo_id(mongo_id) when is_integer(mongo_id), do: true
     defp convertable_to_mongo_id(<< _ :: size(192)>>), do: true
     defp convertable_to_mongo_id(<< _ :: size(96)>>), do: true
     defp convertable_to_mongo_id(_id), do: false
@@ -428,12 +433,18 @@ defmodule MongoEcto.Repo do
     @spec to_mongo_id(mongo_id) :: mongo_bson_id
     defp to_mongo_id(nil), do: nil
     defp to_mongo_id(%BSON.ObjectId{} = id), do: id
-    defp to_mongo_id(<< _ :: size(192)>> = string_id) do
+    defp to_mongo_id(<< _ :: size(192)>> = string_id) when is_bitstring(string_id) do
         binary_id = Base.decode16!(string_id, case: :lower)
         to_mongo_id(binary_id)
     end
     defp to_mongo_id(<< _ :: size(96)>> = binary_id) do
         %BSON.ObjectId{value: binary_id}
+    end
+    defp to_mongo_id(string_id) when is_bitstring(string_id) do
+        string_id
+    end
+    defp to_mongo_id(integer_id) when is_integer(integer_id) do
+        integer_id
     end
 
 
@@ -456,6 +467,9 @@ defmodule MongoEcto.Repo do
     defp normalise_query_chunk({key, %BSON.ObjectId{} = value}, acc) do
         Map.put acc, key, value
     end
+    defp normalise_query_chunk({key, %{__struct__: _} = value}, acc) do
+        Map.put acc, key, value
+    end
     defp normalise_query_chunk({key, value}, acc) when is_map(value) do
         Map.put acc, key, normalise_query_map(value)
     end
@@ -475,6 +489,13 @@ defmodule MongoEcto.Repo do
     defp cursor_record_to_struct(schema,
         %{"_id" => %BSON.ObjectId{value: id}} = model,
         preload) do
+        cursor_record_to_struct(schema, id, model, preload)
+    end
+    defp cursor_record_to_struct(schema, %{"_id" => id} = model, preload) do
+        cursor_record_to_struct(schema, id, model, preload)
+    end
+    @spec cursor_record_to_struct(mongo_schema, String.t, map(), mongo_preload) :: mongo_record
+    def cursor_record_to_struct(schema, id, model, preload) do
         model = Map.delete(model, "_id")
         model = for {key, val} <- model, into: %{} do
             atom_key = String.to_atom(key)

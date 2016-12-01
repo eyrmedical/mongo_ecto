@@ -15,6 +15,19 @@ defmodule MongoEcto.Repo.ValidateTest do
         end
     end
 
+    defmodule ManualPkAccount do
+        use Ecto.Schema
+        use MongoEcto.Model, :model
+
+        @collection_name "accounts"
+        @primary_key {:id, :binary_id, []}
+
+        embedded_schema do
+            field :nickname, :string
+            field :email, :string
+        end
+    end
+
     defmodule NoPkAccount do
         use Ecto.Schema
         use MongoEcto.Model, :model
@@ -38,7 +51,7 @@ defmodule MongoEcto.Repo.ValidateTest do
     test "get raises exception with incorrect mongo id" do
         message = "Field is not correct Mongo Id"
         assert_raise Ecto.InvalidMongoIdError, message, fn ->
-            TestRepo.get(Account, 456)
+            TestRepo.get(Account, 4.56)
         end
     end
 
@@ -149,9 +162,9 @@ defmodule MongoEcto.Repo.ValidateTest do
     end
 
     test "update invalid changeset returns error" do
-         account = %Account{id: "ffffffffffffffffffffffff"}
-         changeset = account |> Ecto.Changeset.cast(%{}, [:email], [])
-         assert {:error, changeset} == TestRepo.update(changeset)
+        account = %Account{id: "ffffffffffffffffffffffff"}
+        changeset = account |> Ecto.Changeset.cast(%{}, [:email], [])
+        assert {:error, changeset} == TestRepo.update(changeset)
     end
 
     test "update! invalid changeset raises exception" do
@@ -160,5 +173,15 @@ defmodule MongoEcto.Repo.ValidateTest do
         assert_raise Ecto.InvalidChangesetError, fn ->
             TestRepo.update!(changeset)
         end
+    end
+
+    test "insert and read value with non-ObjectId _id" do
+        Mongo.delete_many(MongoEcto, "accounts", %{})
+        {:ok, %Mongo.InsertOneResult{inserted_id: test_id}} =
+            Mongo.insert_one(MongoEcto, "accounts", %{_id: "SomETesTid"})
+        assert test_id
+        account = TestRepo.get!(Account, test_id)
+        assert account
+        assert TestRepo.all(Account, %{_id: test_id}) == [account]
     end
 end

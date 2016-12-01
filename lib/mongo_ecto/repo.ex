@@ -40,7 +40,7 @@ defmodule MongoEcto.Repo do
     end
     @spec all(mongo_schema, mongo_query, mongo_options, mongo_preload) :: [mongo_record] | []
     def all(schema, query, options, preload) do
-        mongo_raw_data = query(schema.collection_name, query, options)
+        mongo_raw_data = query(schema, query, options)
         Enum.map(mongo_raw_data, &(cursor_record_to_struct(schema, &1, preload)))
     end
 
@@ -64,7 +64,7 @@ defmodule MongoEcto.Repo do
     Get record by id, raise if not found.
     """
     @spec get!(mongo_schema, mongo_id) :: mongo_record | no_return
-    def get!(schema, nil), do: raise %Ecto.NoResultsError{message: "no results found"}
+    def get!(_schema, nil), do: raise %Ecto.NoResultsError{message: "no results found"}
     def get!(schema, id) do
         raise_if_no_results schema, get(schema, id)
     end
@@ -396,7 +396,7 @@ defmodule MongoEcto.Repo do
     end
 
 
-    #Generates automatic gereted fields (such as updated_at, inserted_at etc.)
+    # Generates automatic gereted fields (such as updated_at, inserted_at etc.)
     @spec autogenerate(mongo_changeset, atom()) :: mongo_changeset
     defp autogenerate(%Changeset{data: %{__struct__: schema}, changes: changes} = changeset, action) do
         new_changes = Enum.reduce schema.__schema__(action), changes, fn
@@ -407,14 +407,14 @@ defmodule MongoEcto.Repo do
     end
 
 
-    #Checks if id is a correct mongo_id type
+    # Checks if id is a correct mongo_id type.
     @spec is_mongo_id(mongo_id) :: boolean()
     defp is_mongo_id(id) do
         convertable_to_mongo_id(id) or is_mongo_bson_id(id)
     end
 
 
-    #Checks if id convertable to BSON.ObjectId
+    # Checks if id convertable to BSON.ObjectId.
     @spec convertable_to_mongo_id(mongo_id) :: boolean()
     defp convertable_to_mongo_id(mongo_id) when is_bitstring(mongo_id), do: true
     defp convertable_to_mongo_id(mongo_id) when is_integer(mongo_id), do: true
@@ -423,7 +423,7 @@ defmodule MongoEcto.Repo do
     defp convertable_to_mongo_id(_id), do: false
 
 
-    #Checks if id is a BSON.ObjectId type
+    # Checks if id is a BSON.ObjectId type.
     @spec is_mongo_bson_id(mongo_id) :: boolean()
     defp is_mongo_bson_id(%BSON.ObjectId{} = _id), do: true
     defp is_mongo_bson_id(_id), do: false
@@ -449,38 +449,45 @@ defmodule MongoEcto.Repo do
 
 
     # Query mongo for data.
-    @spec query(String.t, mongo_query, mongo_options) :: [map()]
-    defp query(collection_name, query, options) do
-        mongo_cursor = Mongo.find(MongoEcto, collection_name, normalise_query_map(query), options)
+    @spec query(mongo_schema, mongo_query, mongo_options) :: [map()]
+    defp query(schema, query, options) do
+        mongo_cursor = Mongo.find(MongoEcto, schema.collection_name, normalise_query_map(schema, query), options)
         mongo_cursor
         |> Enum.to_list
     end
 
     # Normalise query to fit MongoDb.
-    @spec normalise_query_map(mongo_query) :: mongo_query
-    defp normalise_query_map(query) do
-        Enum.reduce query, %{}, &normalise_query_chunk/2
+    @spec normalise_query_map(mongo_schema, mongo_query) :: mongo_query
+    defp normalise_query_map(schema, query) do
+        Enum.reduce query, %{}, &(normalise_query_chunk(schema, &1, &2))
     end
 
-    # Normalise query chunk
-    @spec normalise_query_chunk({atom(), any()}, mongo_query) :: mongo_query
-    defp normalise_query_chunk({key, %BSON.ObjectId{} = value}, acc) do
+    # Normalise query chunk.
+    @spec normalise_query_chunk(mongo_schema, {atom(), any()}, mongo_query) :: mongo_query
+    defp normalise_query_chunk(_schema, {key, %BSON.ObjectId{} = value}, acc) do
         Map.put acc, key, value
     end
-    defp normalise_query_chunk({key, %{__struct__: _} = value}, acc) do
+    defp normalise_query_chunk(_schema, {key, %{__struct__: _} = value}, acc) do
         Map.put acc, key, value
     end
-    defp normalise_query_chunk({key, value}, acc) when is_map(value) do
-        Map.put acc, key, normalise_query_map(value)
+    defp normalise_query_chunk(schema, {key, value}, acc) when is_map(value) do
+        Map.put acc, key, normalise_query_map(schema, value)
     end
-    defp normalise_query_chunk({key, << _ :: size(96)>> = value}, acc) do
-        Map.put acc, key, to_mongo_id(value)
+    defp normalise_query_chunk(schema, {key, << _ :: size(96)>> = value}, acc) do
+        Map.put acc, key, convert_mongo_id_field(schema, key, value)
     end
-    defp normalise_query_chunk({key, << _ :: size(192)>> = value}, acc) do
-        Map.put acc, key, to_mongo_id(value)
+    defp normalise_query_chunk(schema, {key, << _ :: size(192)>> = value}, acc) do
+        Map.put acc, key, convert_mongo_id_field(schema, key, value)
     end
-    defp normalise_query_chunk({key, value}, acc) do
+    defp normalise_query_chunk(_schema, {key, value}, acc) do
         Map.put acc, key, value
+    end
+
+    # Helper function to convert to valid mongo id's of primary and association keys.
+    @spec convert_mongo_id_field(mongo_schema, atom(), any()) :: any()
+    defp convert_mongo_id_field(schema, key, value) do
+        fields = schema.__schema__(:primary_key) ++ schema.__schema__(:associations)
+        if key in fields, do: to_mongo_id(value), else: value
     end
 
 

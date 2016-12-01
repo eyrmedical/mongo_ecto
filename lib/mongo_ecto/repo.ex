@@ -131,7 +131,7 @@ defmodule MongoEcto.Repo do
 
         result = Mongo.insert_one(MongoEcto, schema.collection_name, new_record_map)
         case result do
-            {:ok, %{inserted_id: bson_id} = res} ->
+            {:ok, %{inserted_id: bson_id}} ->
                 inserted_record = Map.put(new_record, :id, mongo_id_to_string(bson_id))
                 {:ok, inserted_record}
             {:error, mongo_error} ->

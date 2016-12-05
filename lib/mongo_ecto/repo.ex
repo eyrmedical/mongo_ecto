@@ -476,7 +476,9 @@ defmodule MongoEcto.Repo do
     # Helper function to convert to valid mongo id's of primary and association keys.
     @spec convert_mongo_id_field(mongo_schema, atom(), any()) :: any()
     defp convert_mongo_id_field(schema, key, value) do
-        fields = schema.__schema__(:primary_key) ++ schema.__schema__(:associations)
+        fields = Enum.reduce schema.__schema__(:types), [], fn({key, value}, acc) ->
+            if value === :binary_id, do: [key] ++ acc, else: acc
+        end
         if key in fields, do: to_mongo_id(value), else: value
     end
 

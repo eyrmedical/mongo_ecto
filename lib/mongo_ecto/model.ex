@@ -90,12 +90,17 @@ defmodule MongoEcto.Model.Helpers do
     end
     def unique_constraint(%{data: %{__struct__: schema}} = changeset, query) do
         result = MongoEcto.Repo.get_by(schema, query)
-        case result do
-            nil -> changeset
-            _ ->
-                fields = Map.keys(query)
-                Enum.reduce fields, changeset, fn(field, changeset) ->
-                    Ecto.Changeset.add_error(changeset, field, "unique constraint has failed")
+        case {result, schema.__schema__(:primary_key)} do
+            {nil, _} -> changeset
+            {_, []} -> changeset
+            {_, primary_keys} ->
+                if Map.take(changeset.data, primary_keys) == Map.take(result, primary_keys) do
+                    changeset
+                else
+                    fields = Map.keys(query)
+                    Enum.reduce fields, changeset, fn(field, changeset) ->
+                        Ecto.Changeset.add_error(changeset, field, "unique constraint has failed")
+                    end
                 end
         end
     end

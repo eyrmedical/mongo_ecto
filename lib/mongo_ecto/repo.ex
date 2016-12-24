@@ -328,6 +328,19 @@ defmodule MongoEcto.Repo do
         children = all(childSchema, query)
         Map.put(record, assoc_field, children)
     end
+    # Load HasOne assoc relationship
+    defp load_assoc(record, %Ecto.Association.Has{
+        cardinality: :one,
+        relationship: :child,
+        field: assoc_field,
+        owner_key: parent_key,
+        related_key: child_key,
+        related: childSchema
+    }) do
+        query = Map.put(%{}, child_key, Map.get(record, parent_key))
+        children = one(childSchema, query)
+        Map.put(record, assoc_field, children)
+    end
     defp load_assoc(record, %Ecto.Association.BelongsTo{
         cardinality: :one,
         relationship: :parent,

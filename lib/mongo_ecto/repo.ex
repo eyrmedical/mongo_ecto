@@ -308,7 +308,8 @@ defmodule MongoEcto.Repo do
         children = Map.get(record, direct_child)
         children = Enum.map children, &(preload(&1, direct_grandc))
         all_grandc = Enum.reduce children, [], fn(child, acc) ->
-            acc ++ Map.get(child, direct_grandc)
+            grandc = Map.get(child, direct_grandc)
+            acc ++ if is_list(grandc), do: grandc, else: [grandc]
         end
         
         record

@@ -128,6 +128,7 @@ defmodule MongoEcto.Repo do
         new_record_map = Map.from_struct(new_record)
         |> convert_types_with(&to_mongo_type/1)
         |> convert_types_for(foreign_keys, &to_mongo_id/1)
+        |> convert_embeds(schema.__schema__(:embeds))
 
         result = Mongo.insert_one(MongoEcto, schema.collection_name, new_record_map)
         case result do
@@ -173,6 +174,7 @@ defmodule MongoEcto.Repo do
         to_update = Map.from_struct(record_to_update)
         |> convert_types_with(&to_mongo_type/1)
         |> convert_types_for(foreign_keys, &to_mongo_id/1)
+        |> convert_embeds(schema.__schema__(:embeds))
 
         result = Mongo.replace_one(
             MongoEcto,
@@ -407,7 +409,21 @@ defmodule MongoEcto.Repo do
             {k, {mod, fun, args}}, acc ->
                 Map.put_new(acc, k, apply(mod, fun, args))
         end
-        Ecto.Changeset.change(changeset, new_changes)
+
+        # Support for embedded schemas in main document
+        {filtered_changes, updated_changeset} = 
+            Enum.reduce schema.__schema__(:embeds), {new_changes, changeset}, fn
+                embed_key, {new_changes, changeset} ->
+                    if Map.has_key?(new_changes, embed_key) do
+                        embed = Map.fetch!(new_changes, embed_key)
+                        changeset = Ecto.Changeset.put_embed(changeset, embed_key, embed)
+                        {Map.delete(new_changes, embed_key), changeset}
+                    else
+                        {new_changes, changeset}
+                    end
+            end
+
+        Ecto.Changeset.change(updated_changeset, filtered_changes)
     end
 
 
@@ -498,37 +514,80 @@ defmodule MongoEcto.Repo do
 
 
     # Ensure that returned map() record is the struct of the schema type.
+    @spec cursor_record_to_struct(map(), mongo_schema) :: mongo_record
+    defp cursor_record_to_struct(model, schema) do
+        embed_keys = schema.__schema__(:embeds)
+        model = for {key, val} <- model, into: %{} do
+            atom_key = String.to_atom(key)
+            if atom_key in embed_keys do
+                embed_spec = schema.__schema__(:embed, atom_key)
+                cursor_record_to_embed(atom_key, val, embed_spec)
+            else
+                case val do
+                    %BSON.ObjectId{value: binary_id} ->
+                        {atom_key, mongo_id_to_string(binary_id)}
+                    %BSON.DateTime{utc: ts} ->
+                        case schema.__schema__(:type, atom_key) do
+                            Ecto.Date ->
+                                {atom_key, timestamp_to_date(ts)}
+                            _ ->
+                                {atom_key, timestamp_to_datetime(ts)}
+                        end
+                    _ ->
+                        {atom_key, val}
+                end
+            end
+        end
+        Kernel.struct(schema, model)
+    end
     @spec cursor_record_to_struct(mongo_schema, map(), mongo_preload) :: mongo_record
-    defp cursor_record_to_struct(schema,
-        %{"_id" => %BSON.ObjectId{value: id}} = model,
-        preload) do
+    defp cursor_record_to_struct(schema, %{"_id" => %BSON.ObjectId{value: id}} = model, preload) do
         cursor_record_to_struct(schema, id, model, preload)
     end
     defp cursor_record_to_struct(schema, %{"_id" => id} = model, preload) do
         cursor_record_to_struct(schema, id, model, preload)
     end
+    defp cursor_record_to_struct(schema, model, preload) do
+        model
+        |> cursor_record_to_struct(schema)
+        |> preload(preload)
+    end
     @spec cursor_record_to_struct(mongo_schema, String.t, map(), mongo_preload) :: mongo_record
     def cursor_record_to_struct(schema, id, model, preload) do
-        model = Map.delete(model, "_id")
-        model = for {key, val} <- model, into: %{} do
-            atom_key = String.to_atom(key)
-            case val do
-                %BSON.ObjectId{value: binary_id} ->
-                    {atom_key, mongo_id_to_string(binary_id)}
-                %BSON.DateTime{utc: ts} ->
-                    case schema.__schema__(:type, atom_key) do
-                        Ecto.Date ->
-                            {atom_key, timestamp_to_date(ts)}
-                        _ ->
-                            {atom_key, timestamp_to_datetime(ts)}
-                    end
-                _ ->
-                    {atom_key, val}
-            end
+        if :id in schema.__schema__(:primary_key) do
+            model
+            |> Map.delete("_id")
+            |> cursor_record_to_struct(schema)
+            |> Map.put(:id, mongo_id_to_string(id))
+            |> preload(preload)
+        else
+            model
+            |> Map.delete("_id")
+            |> cursor_record_to_struct(schema)
+            |> preload(preload)
         end
-        model = Map.put(model, :id, mongo_id_to_string(id))
-        record = Kernel.struct(schema, model)
-        preload(record, preload)
+    end
+    
+
+    # Convert mongo list or map to embedded schema
+    @spec cursor_record_to_embed(atom(), map() | [map()], %Ecto.Embedded{}) :: {atom(), mongo_schema | [mongo_schema]}
+    defp cursor_record_to_embed(key, vals, %Ecto.Embedded{
+        cardinality: :many, 
+        field: _owner_key,
+        owner: _owner_schema,
+        related: embedded_schema
+    }) when is_list(vals) do
+        embeds = Enum.map vals, &(cursor_record_to_struct(&1, embedded_schema))
+        {key, embeds}
+    end
+    defp cursor_record_to_embed(key, %{} = val, %Ecto.Embedded{
+        cardinality: :one, 
+        field: _owner_key,
+        owner: _owner_schema,
+        related: embedded_schema
+    }) do
+        embed = cursor_record_to_struct(val, embedded_schema)
+        {key, embed}
     end
 
 
@@ -603,6 +662,35 @@ defmodule MongoEcto.Repo do
         Enum.reduce fields, record, fn(field, acc) ->
             Map.update!(acc, field, f)
         end
+    end
+
+
+    # Convert embedded documents to normal maps
+    @spec convert_embeds(mongo_schema, [atom()]) :: mongo_schema
+    defp convert_embeds(record, embed_keys) do
+        Enum.reduce embed_keys, record, fn(embed_key, record) ->
+            if Map.has_key?(record, embed_key) do
+                embed = Map.fetch!(record, embed_key)
+                Map.put record, embed_key, parse_embed(embed)
+            else
+                record
+            end
+        end
+    end
+
+    # Convert embeded schema to a Mongo serialisable object
+    @spec parse_embed([map()] | map()) :: [map()] | map() | no_return
+    defp parse_embed(embed) when is_list(embed) do
+        Enum.map embed, &parse_embed/1
+    end
+    defp parse_embed(%{__struct__: _} = embed) do
+        Map.from_struct(embed)
+    end
+    defp parse_embed(%{} = embed) do
+        embed
+    end
+    defp parse_embed(_) do
+        raise Ecto.InvalidChangesetError
     end
 
 

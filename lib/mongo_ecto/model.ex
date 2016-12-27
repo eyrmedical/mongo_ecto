@@ -32,7 +32,9 @@ defmodule MongoEcto.Model do
 
     defmacro __before_compile__(_env) do
         quote do
-            def collection_name, do: @collection_name
+            if Module.get_attribute(__MODULE__, :collection_name) do
+                def collection_name, do: @collection_name
+            end
         end
     end
 end

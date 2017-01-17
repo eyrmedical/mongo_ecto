@@ -13,6 +13,10 @@ defmodule MongoEcto.Model do
             def apply_changes(model) do
                 Helpers.apply_changes(model)
             end
+            
+            def put_embed(changeset, name, value, opts \\ []) do
+                Helpers.put_embed(changeset, name, value, opts)
+            end
 
             def unique_constraint(model, field) do
                 Helpers.unique_constraint(model, field)
@@ -57,6 +61,33 @@ defmodule MongoEcto.Model.Helpers do
         fields = schema.__schema__(:fields)
         drop_fields = (Map.keys(record) -- (fields ++ [:__struct__])) ++ [:id]
         Map.drop record, drop_fields
+    end
+    
+    
+    @doc """
+    We override the default put_embed,
+    because it doesn't map :replace actions to :delete
+    """
+    @spec put_embed(mongo_changeset, atom(), any(), Keyword.t) :: mongo_changeset
+    def put_embed(%{data: %{__struct__: schema}} = changeset, name, value, opts) do
+        changeset = Ecto.Changeset.put_embed(changeset, name, value, opts)
+        case schema.__schema__(:embed, name) do
+            %Ecto.Embedded{cardinality: :many, on_replace: replace_action} ->
+                Map.update(changeset, :changes, %{}, fn(changes) ->
+                    Map.update(changes, name, [], fn(values) ->
+                        Enum.map(values, fn(value) ->
+                            case value do
+                                %{action: :replace} ->
+                                    Map.put(value, :action, replace_action)
+                                _ ->
+                                    value
+                            end
+                        end)
+                    end)
+                end)
+            _ ->
+                changeset
+        end
     end
 
 

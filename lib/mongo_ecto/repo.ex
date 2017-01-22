@@ -683,8 +683,11 @@ defmodule MongoEcto.Repo do
     defp parse_embed(embed) when is_list(embed) do
         Enum.map embed, &parse_embed/1
     end
-    defp parse_embed(%{__struct__: _} = embed) do
-        Map.from_struct(embed)
+    defp parse_embed(%{__struct__: schema} = embed) do
+        assocs = schema.__schema__(:associations)
+        embed
+        |> Map.drop(assocs)
+        |> Map.from_struct
     end
     defp parse_embed(%{} = embed) do
         embed

@@ -357,8 +357,12 @@ defmodule MongoEcto.Repo do
         related_key: child_key,
         related: parentSchema
     }) do
-        query = Map.put(%{}, parent_key, Map.get(record, child_key))
-        parent = one(parentSchema, query)
+        parent = if parent_key == :id do
+            get(parentSchema, Map.get(record, assoc_field_id))
+        else
+            query = Map.put(%{}, parent_key, Map.get(record, assoc_field_id))
+            one(parentSchema, query)
+        end
         Map.put(record, assoc_field, parent)
     end
     defp load_assoc(_record, assoc) do

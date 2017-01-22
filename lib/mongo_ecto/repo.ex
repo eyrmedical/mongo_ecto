@@ -51,11 +51,16 @@ defmodule MongoEcto.Repo do
     @spec get(mongo_schema, mongo_id) :: mongo_record | nil | no_return
     def get(_schema, nil), do: nil
     def get(schema, id) do
-        if is_mongo_id(id) do
-            id = to_mongo_id(id)
+        id = if is_mongo_id(id), do: to_mongo_id(id), else: id
+        with [key] <- schema.__schema__(:primary_key),
+            {:is_id?, _, true} <- {:is_id?, key, key == :id}
+        do
             get_by(schema, %{_id: id})
         else
-            raise Ecto.InvalidMongoIdError
+            {:is_id?, key, false} ->
+                get_by(schema, Map.put(%{}, key, id))
+            _ ->
+                raise Ecto.InvalidMongoIdError
         end
     end
 
@@ -349,10 +354,11 @@ defmodule MongoEcto.Repo do
         relationship: :parent,
         field: assoc_field,
         owner_key: parent_key,
-        related_key: _child_key,
+        related_key: child_key,
         related: parentSchema
     }) do
-        parent = get(parentSchema, Map.get(record, parent_key))
+        query = Map.put(%{}, parent_key, Map.get(record, child_key))
+        parent = one(parentSchema, query)
         Map.put(record, assoc_field, parent)
     end
     defp load_assoc(_record, assoc) do

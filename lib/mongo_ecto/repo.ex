@@ -353,8 +353,8 @@ defmodule MongoEcto.Repo do
         cardinality: :one,
         relationship: :parent,
         field: assoc_field,
-        owner_key: parent_key,
-        related_key: child_key,
+        owner_key: assoc_field_id,
+        related_key: parent_key,
         related: parentSchema
     }) do
         parent = if parent_key == :id do

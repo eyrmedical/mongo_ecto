@@ -580,7 +580,7 @@ defmodule MongoEcto.Repo do
     
 
     # Convert mongo list or map to embedded schema
-    @spec cursor_record_to_embed(atom(), map() | [map()], %Ecto.Embedded{}) :: {atom(), mongo_schema | [mongo_schema]}
+    @spec cursor_record_to_embed(atom(), nil | map() | [map()], %Ecto.Embedded{}) :: {atom(), mongo_schema | [mongo_schema]}
     defp cursor_record_to_embed(key, vals, %Ecto.Embedded{
         cardinality: :many, 
         field: _owner_key,
@@ -598,6 +598,9 @@ defmodule MongoEcto.Repo do
     }) do
         embed = cursor_record_to_struct(val, embedded_schema)
         {key, embed}
+    end
+    defp cursor_record_to_embed(key, nil, _) do
+        {key, nil}
     end
 
 
@@ -689,7 +692,10 @@ defmodule MongoEcto.Repo do
     end
 
     # Convert embeded schema to a Mongo serialisable object
-    @spec parse_embed([map()] | map()) :: [map()] | map() | no_return
+    @spec parse_embed([map()] | map() | nil) :: [map()] | map() | no_return
+    defp parse_embed(nil) do
+        nil
+    end
     defp parse_embed(embed) when is_list(embed) do
         Enum.map embed, &parse_embed/1
     end
